@@ -1,0 +1,41 @@
+# .github/workflows/start-ec2.yml
+
+name: 'Start Citygate EC2 Environment'
+
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  # Scheduled run: Sunday-Thursday at 8:00 AM Israel Time (IDT is UTC+3, so 5:00 AM UTC)
+  schedule:
+    - cron: '0 5 * * 0-4' # 0=Sunday, 4=Thursday
+
+# OIDC permissions
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  start-ec2-instances:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials from GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::588738602727:role/GitHubActions-Citygate-EC2-Role
+          aws-region: eu-west-1
+
+      - name: Start EC2 Instances
+        run: |
+          echo "Fetching EC2 instances with tag Environment=CitygateDev..."
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:Environment,Values=CitygateDev" "Name=instance-state-name,Values=stopped" \
+            --query "Reservations[*].Instances[*].InstanceId" \
+            --output text)
+
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "No stopped EC2 instances found with the specified tag. Nothing to do."
+          else
+            echo "Starting EC2 instances: $INSTANCE_IDS"
+            aws ec2 start-instances --instance-ids $INSTANCE_IDS
+          fi
