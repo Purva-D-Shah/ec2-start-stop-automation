@@ -1,37 +1,51 @@
-# .github/workflows/start-ec2.yml
+# .github/workflows/start-environment.yml
 
-name: 'Start Citygate EC2 Environment'
+name: 'Start Citygate Dev Environment'
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 5 * * 0-4'
+    - cron: '0 5 * * 0-4' # 8:00 AM Israel Time (Sun-Thu)
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  start-ec2-instances:
+  start-aws-resources:
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS Credentials from GitHub OIDC
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: arn:aws:iam::588738602727:role/GitHubActions-Citygate-EC2-Role
+          role-to-assume: arn:aws:iam::588738602727:role/GitHubActions-Citygate-EC2-Role # Your Role ARN
           aws-region: eu-west-1
+
+      - name: Start RDS Database
+        run: |
+          DB_INSTANCE_ID=$(aws rds describe-db-instances --query "DBInstances[?TagList[?Key=='Environment' && Value=='CitygateDev'] && DBInstanceStatus=='stopped'].DBInstanceIdentifier" --output text)
+          if [ -z "$DB_INSTANCE_ID" ]; then
+            echo "No stopped RDS instance found with the specified tag."
+          else
+            echo "Starting RDS instance: $DB_INSTANCE_ID"
+            aws rds start-db-instance --db-instance-identifier $DB_INSTANCE_ID
+          fi
+
+      - name: Start ElastiCache Cluster
+        run: |
+          REPLICATION_GROUP_ID=$(aws elasticache describe-replication-groups --query "ReplicationGroups[?contains(TagList[?Key=='Environment'].Value, 'CitygateDev') && Status=='stopped'].ReplicationGroupId" --output text)
+          if [ -z "$REPLICATION_GROUP_ID" ]; then
+            echo "No stopped ElastiCache cluster found with the specified tag."
+          else
+            echo "Starting ElastiCache cluster: $REPLICATION_GROUP_ID"
+            aws elasticache start-replication-group --replication-group-id $REPLICATION_GROUP_ID
+          fi
 
       - name: Start EC2 Instances
         run: |
-          # NOTE: Ensure your EC2 tag value is exactly "CitygateDev" (case-sensitive)
-          echo "Fetching EC2 instances with tag Environment=CitygateDev..."
-          INSTANCE_IDS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Environment,Values=CitygateDev" "Name=instance-state-name,Values=stopped" \
-            --query "Reservations[*].Instances[*].InstanceId" \
-            --output text)
-
+          INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=CitygateDev" "Name=instance-state-name,Values=stopped" --query "Reservations[*].Instances[*].InstanceId" --output text)
           if [ -z "$INSTANCE_IDS" ]; then
-            echo "No stopped EC2 instances found with the specified tag. Nothing to do."
+            echo "No stopped EC2 instances found with the specified tag."
           else
             echo "Starting EC2 instances: $INSTANCE_IDS"
             aws ec2 start-instances --instance-ids $INSTANCE_IDS

@@ -1,39 +1,61 @@
-# .github/workflows/stop-ec2.yml
+# .github/workflows/stop-environment.yml
 
-name: 'Stop Citygate EC2 Environment'
+name: 'Stop Citygate Dev Environment'
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 19 * * 0-4'
+    - cron: '0 19 * * 0-4' # 10:00 PM Israel Time (Sun-Thu)
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  stop-ec2-instances:
+  stop-aws-resources:
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS Credentials from GitHub OIDC
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          # CORRECTED: The Role ARN now matches the start workflow
-          role-to-assume: arn:aws:iam::588738602727:role/GitHubActions-Citygate-EC2-Role
+          role-to-assume: arn:aws:iam::588738602727:role/GitHubActions-Citygate-EC2-Role 
           aws-region: eu-west-1
 
       - name: Stop EC2 Instances
         run: |
-          # NOTE: Ensure your EC2 tag value is exactly "CitygateDev" (case-sensitive)
-          echo "Fetching EC2 instances with tag Environment=CitygateDev..."
-          INSTANCE_IDS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Environment,Values=CitygateDev" "Name=instance-state-name,Values=running" \
-            --query "Reservations[*].Instances[*].InstanceId" \
-            --output text)
-
+          INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=CitygateDev" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].InstanceId" --output text)
           if [ -z "$INSTANCE_IDS" ]; then
-            echo "No running EC2 instances found with the specified tag. Nothing to do."
+            echo "No running EC2 instances found with the specified tag."
           else
             echo "Stopping EC2 instances: $INSTANCE_IDS"
             aws ec2 stop-instances --instance-ids $INSTANCE_IDS
+          fi
+          
+      - name: Wait for EC2 instances to stop
+        run: |
+          INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=CitygateDev" "Name=instance-state-name,Values=running,stopping" --query "Reservations[*].Instances[*].InstanceId" --output text)
+          if [ ! -z "$INSTANCE_IDS" ]; then
+            echo "Waiting for instances to stop: $INSTANCE_IDS"
+            aws ec2 wait instance-stopped --instance-ids $INSTANCE_IDS
+            echo "Instances have stopped."
+          fi
+
+      - name: Stop RDS Database
+        run: |
+          DB_INSTANCE_ID=$(aws rds describe-db-instances --query "DBInstances[?TagList[?Key=='Environment' && Value=='CitygateDev'] && DBInstanceStatus=='available'].DBInstanceIdentifier" --output text)
+          if [ -z "$DB_INSTANCE_ID" ]; then
+            echo "No available RDS instance found with the specified tag."
+          else
+            echo "Stopping RDS instance: $DB_INSTANCE_ID"
+            aws rds stop-db-instance --db-instance-identifier $DB_INSTANCE_ID
+          fi
+
+      - name: Stop ElastiCache Cluster
+        run: |
+          REPLICATION_GROUP_ID=$(aws elasticache describe-replication-groups --query "ReplicationGroups[?contains(TagList[?Key=='Environment'].Value, 'CitygateDev') && Status=='available'].ReplicationGroupId" --output text)
+          if [ -z "$REPLICATION_GROUP_ID" ]; then
+            echo "No available ElastiCache cluster found with the specified tag."
+          else
+            echo "Stopping ElastiCache cluster: $REPLICATION_GROUP_ID"
+            aws elasticache stop-replication-group --replication-group-id $REPLICATION_GROUP_ID
           fi
