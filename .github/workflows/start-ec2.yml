@@ -3,14 +3,10 @@
 name: 'Start Citygate EC2 Environment'
 
 on:
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
-
-  # Scheduled run: Sunday-Thursday at 8:00 AM Israel Time (IDT is UTC+3, so 5:00 AM UTC)
   schedule:
-    - cron: '0 5 * * 0-4' # 0=Sunday, 4=Thursday
+    - cron: '0 5 * * 0-4'
 
-# OIDC permissions
 permissions:
   id-token: write
   contents: read
@@ -27,6 +23,7 @@ jobs:
 
       - name: Start EC2 Instances
         run: |
+          # NOTE: Ensure your EC2 tag value is exactly "CitygateDev" (case-sensitive)
           echo "Fetching EC2 instances with tag Environment=CitygateDev..."
           INSTANCE_IDS=$(aws ec2 describe-instances \
             --filters "Name=tag:Environment,Values=CitygateDev" "Name=instance-state-name,Values=stopped" \
